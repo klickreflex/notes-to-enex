@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Local note data / exports — NOT tracked
+/test/
+/wohnung/
+*.enex
+*.textbundle/
+*.textpack
+
+# Day One JSON exports and their attachment folders
+Feedback.json
+/photos/
+/videos/
+/pdfs/
