@@ -92,7 +92,7 @@ target folder (e.g. `💬 Feedback`).
 
 - **Title** — first `# heading`; for Markdown, falls back to frontmatter
   `title:` then the filename.
-- **Date header** (`DD.MM.YYYY`) and note timestamps:
+- **Date header** (`YYYY-MM-DD`) and note timestamps:
   - Day One → the entry's creation date (already UTC in the export).
   - Markdown / TextBundle → YAML frontmatter `date:` if present, otherwise the
     **file's date**: for a `.textbundle` that's the **bundle folder's** creation
@@ -138,6 +138,6 @@ to resolve it tells you which notes are affected.
 
 ## Tweaks
 
-- **Date format** — change the `strftime("%d.%m.%Y")` calls.
+- **Date format** — change the `strftime("%Y-%m-%d")` calls.
 - **Richer header** — Day One entries also carry `location`, `weather`, `tags`;
   add them to the `header` line in `dayone_note()`.

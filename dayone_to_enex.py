@@ -157,7 +157,7 @@ def dayone_note(entry, base):
     if ZoneInfo and tz:
         try: local = dt.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz))
         except Exception: pass
-    header = f'<div><b>{html.escape(local.strftime("%d.%m.%Y"))}</b></div><div><br/></div>'
+    header = f'<div><b>{html.escape(local.strftime("%Y-%m-%d"))}</b></div><div><br/></div>'
     created = dt.strftime("%Y%m%dT%H%M%SZ")
     md = entry.get("modifiedDate")
     try:
@@ -278,7 +278,7 @@ def markdown_note(path):
         created_local = _file_birth_dt(date_src)
     updated_local = datetime.fromtimestamp(os.path.getmtime(date_src))
 
-    header = f'<div><b>{html.escape(created_local.strftime("%d.%m.%Y"))}</b></div><div><br/></div>'
+    header = f'<div><b>{html.escape(created_local.strftime("%Y-%m-%d"))}</b></div><div><br/></div>'
     return {"title": title, "enml": header + "".join(parts),
             "created": _utc_stamp(created_local), "updated": _utc_stamp(updated_local),
             "atts": atts}
