@@ -99,11 +99,16 @@ target folder (e.g. `💬 Feedback`).
     (birth) time — for a standalone `.md`, the file's own. Modified date uses the
     corresponding mtime. This is fully generic (Bear, Craft, anything that
     produces TextBundles) — no app-specific lookups.
-  - Note: TextBundle is just text + assets; it does **not** carry the original
-    per-note creation date. So the date you get is whatever the filesystem holds
-    — typically the **export date** (which is what Finder shows for the bundle),
-    not the note's historical date. Add a YAML `date:` to a note if you need a
-    specific one.
+  - Important caveat: the date comes from the bundle folder's filesystem
+    **creation (birth) time** (Finder's "Created/Erstellt"), because TextBundle's
+    `info.json` carries no date. But macOS **resets birth time when a file is
+    copied or moved**, so after syncing/copying a bundle you often get the date it
+    landed on disk, not the note's original date. (Confirmed in testing: five
+    bundles spanning 2018–2023 all showed one identical birth date.) The note's
+    true created date survives only in the source app's own database (e.g. Bear's
+    SQLite), which this tool intentionally doesn't read, to stay app-agnostic. If
+    you need exact dates, add a YAML `date:` to the note — it always wins. Check
+    what your files actually hold: `stat -f '%SB | %N' -t '%Y-%m-%d' *.textbundle`.
   - All timestamps are written as true UTC, so Apple Notes won't shift the day
     when it re-localizes them (an earlier version mislabeled local time as UTC,
     which could roll a late-evening note over to the next day).
