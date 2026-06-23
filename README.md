@@ -1,9 +1,9 @@
-# Markdown / Day One → Apple Notes import (`dayone_to_enex.py`)
+# Markdown / HTML / Day One → Apple Notes import (`dayone_to_enex.py`)
 
-Converts your notes — from **Day One JSON exports**, **plain Markdown**, or
-**TextBundle / TextPack** — into a single Evernote **`.enex`** file that Apple
-Notes imports natively (`File → Import to Notes…`), keeping every attachment
-(images, PDFs, videos, audio) as a real Notes attachment.
+Converts your notes — from **Day One JSON exports**, **plain Markdown**,
+**HTML**, or **TextBundle / TextPack** — into a single Evernote **`.enex`** file
+that Apple Notes imports natively (`File → Import to Notes…`), keeping every
+attachment (images, PDFs, videos, audio) as a real Notes attachment.
 
 Use it from the command line, or **double-click `Launch Notes Converter.command`**
 for a small GUI (see [Run it with a GUI](#run-it-with-a-gui-no-terminal)).
@@ -28,11 +28,13 @@ attachments.
 | Day One `.json` file | `python3 dayone_to_enex.py Export.json` | |
 | Single Markdown file | `python3 dayone_to_enex.py note.md` | one note; attachments relative to the file |
 | Folder of Markdown files | `python3 dayone_to_enex.py NotesFolder/` | one note per `.md` |
+| Single HTML file | `python3 dayone_to_enex.py recipe.html` | one note; local images/attachment links relative to the file |
+| Folder of HTML files | `python3 dayone_to_enex.py RecipesFolder/` | one note per `.html` / `.htm` |
 | TextBundle | `python3 dayone_to_enex.py Note.textbundle` | reads `text.md` + `assets/` |
 | TextPack | `python3 dayone_to_enex.py Note.textpack` | zipped bundle, unpacked automatically |
 | Folder of bundles | `python3 dayone_to_enex.py BundlesFolder/` | one note per `.textbundle` / `.textpack` |
 
-Force a mode with `--format dayone|markdown`. Choose the output with
+Force a mode with `--format dayone|markdown|html`. Choose the output with
 `-o /path/Out.enex` (default: next to the source).
 
 Requires Python 3 only — no external packages.
@@ -62,10 +64,10 @@ Prefer clicking to typing? Two extra files in this folder give you a desktop app
   `python3 dayone_to_enex_gui.py`).
 
 In the window: pick a **source** (File… or Folder…), the **format** is
-auto-detected (with a manual override), choose an **output** path, optionally
-tick **“One .enex per note”** (the split option), then **Convert**. A result log
-shows the notes/attachments count and integrity check, with **Reveal in Finder**
-and **Open Apple Notes** buttons afterward.
+auto-detected (with a manual override for Day One, Markdown, or HTML), choose an
+**output** path, optionally tick **“One .enex per note”** (the split option),
+then **Convert**. A result log shows the notes/attachments count and integrity
+check, with **Reveal in Finder** and **Open Apple Notes** buttons afterward.
 
 Keep all three files together — the launcher and GUI load `dayone_to_enex.py`
 from the same folder.
@@ -90,14 +92,15 @@ target folder (e.g. `💬 Feedback`).
 
 ## What each note looks like
 
-- **Title** — first `# heading`; for Markdown, falls back to frontmatter
-  `title:` then the filename.
+- **Title** — first heading; for Markdown, falls back to frontmatter `title:`;
+  for HTML, falls back to `<title>`; then the filename.
 - **Date header** (`YYYY-MM-DD`) and note timestamps:
   - Day One → the entry's creation date (already UTC in the export).
-  - Markdown / TextBundle → YAML frontmatter `date:` if present, otherwise the
+  - Markdown / HTML / TextBundle → YAML frontmatter `date:` if present
+    (Markdown only), otherwise the
     **file's date**: for a `.textbundle` that's the **bundle folder's** creation
-    (birth) time — for a standalone `.md`, the file's own. Modified date uses the
-    corresponding mtime. This is fully generic (Bear, Craft, anything that
+    (birth) time — for a standalone `.md` or `.html`, the file's own. Modified
+    date uses the corresponding mtime. This is fully generic (Bear, Craft, anything that
     produces TextBundles) — no app-specific lookups.
   - Important caveat: the date comes from the bundle folder's filesystem
     **creation (birth) time** (Finder's "Created/Erstellt"), because TextBundle's
@@ -124,6 +127,16 @@ target folder (e.g. `💬 Feedback`).
 - Broken/remote references degrade gracefully (image dropped, link text kept).
 - Recognized attachment types: png, jpg/jpeg, heic/heif, gif, webp, tiff, bmp,
   mp4, mov, m4v, pdf, m4a, mp3, wav. Add more in the `MIME` map at the top.
+
+## HTML attachment rules
+
+- Local `<img src="relative/path.jpg">` images are embedded inline as ENEX
+  resources.
+- Local `<a href="relative/path.pdf">` links are embedded as attachments; the
+  visible link text is kept as note text.
+- `http(s):` and `mailto:` links stay clickable.
+- `<script>`, `<style>`, and PhotoSwipe export controls are ignored so exported
+  recipe/gallery HTML imports as note content rather than page chrome.
 
 ## Day One format quirks (handled automatically)
 

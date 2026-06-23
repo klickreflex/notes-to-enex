@@ -4,12 +4,12 @@ dayone_to_enex_gui.py  —  simple GUI for dayone_to_enex.py
 ==========================================================
 
 A no-dependency desktop front-end (Tkinter, bundled with Python) for the
-Markdown / Day One -> Apple Notes (.enex) converter.
+Markdown / HTML / Day One -> Apple Notes (.enex) converter.
 
 Run:
     python3 dayone_to_enex_gui.py
 
-Pick a source (a Day One export folder/.json, a .md file/folder, or a
+Pick a source (a Day One export folder/.json, a .md/.html file/folder, or a
 .textbundle/.textpack), optionally choose the output path, and click Convert.
 Then in Apple Notes: File -> Import to Notes...  and select the .enex.
 
@@ -48,7 +48,7 @@ class App:
         frm.pack(fill="both", expand=True)
         frm.columnconfigure(1, weight=1)
 
-        ttk.Label(frm, text="Convert Markdown / Day One / TextBundle to an "
+        ttk.Label(frm, text="Convert Markdown / HTML / Day One / TextBundle to an "
                             "Apple Notes-importable .enex file",
                   font=("-size", 12, "-weight", "bold"), wraplength=560)\
             .grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 10))
@@ -71,7 +71,8 @@ class App:
         ttk.Label(frm, text="Mode:").grid(row=3, column=0, sticky="w")
         self.mode_var = tk.StringVar(value="auto")
         mode = ttk.Frame(frm); mode.grid(row=3, column=1, sticky="w", padx=6)
-        for val, txt in [("auto", "Auto-detect"), ("dayone", "Day One"), ("markdown", "Markdown")]:
+        for val, txt in [("auto", "Auto-detect"), ("dayone", "Day One"),
+                         ("markdown", "Markdown"), ("html", "HTML")]:
             ttk.Radiobutton(mode, text=txt, value=val, variable=self.mode_var,
                             command=self._on_source_change).pack(side="left", padx=(0, 10))
 
@@ -146,8 +147,8 @@ class App:
     # ---------- file pickers ----------
     def pick_file(self):
         p = filedialog.askopenfilename(
-            title="Choose a .json, .md, or .textpack file",
-            filetypes=[("Supported", "*.json *.md *.markdown *.textpack"),
+            title="Choose a .json, .md, .html, or .textpack file",
+            filetypes=[("Supported", "*.json *.md *.markdown *.html *.htm *.textpack"),
                        ("All files", "*.*")])
         if p:
             self.src_var.set(p)
@@ -199,7 +200,12 @@ class App:
         ok = False
         try:
             with redirect_stdout(buf), redirect_stderr(buf):
-                notes = conv.dayone_notes(src) if fmt == "dayone" else conv.markdown_notes(src)
+                if fmt == "dayone":
+                    notes = conv.dayone_notes(src)
+                elif fmt == "html":
+                    notes = conv.html_notes(src)
+                else:
+                    notes = conv.markdown_notes(src)
                 try:
                     if split:
                         conv.write_enex_split(notes, out, app=f"{fmt}_to_enex")

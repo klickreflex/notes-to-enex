@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-dayone_to_enex.py  —  Markdown / Day One  ->  Apple Notes (.enex)
-=================================================================
+dayone_to_enex.py  —  Markdown / HTML / Day One  ->  Apple Notes (.enex)
+======================================================================
 
 Convert either
 
   (a) a **Day One JSON export** (entries + photos/ videos/ pdfs/), or
-  (b) **plain Markdown** files that reference attachments by **relative path**
+  (b) **plain Markdown** files that reference attachments by **relative path**, or
+  (c) **HTML** files with local images / attachment links by **relative path**
 
 into a single Evernote `.enex` file that Apple Notes imports natively
 (`File -> Import to Notes...`), keeping every attachment (images, PDFs,
@@ -28,11 +29,15 @@ USAGE
     # A folder of Markdown files -> one note per .md
     python3 dayone_to_enex.py /path/to/MarkdownFolder
 
+    # A folder of HTML files -> one note per .html
+    python3 dayone_to_enex.py /path/to/HtmlFolder
+
     # Force a format / pick output path
-    python3 dayone_to_enex.py SRC --format markdown -o /path/Out.enex
+    python3 dayone_to_enex.py SRC --format html -o /path/Out.enex
 
     Format is auto-detected: a .json (or folder with one) -> Day One;
-    a .md file or a folder containing .md files -> Markdown.
+    a .md file or a folder containing .md files -> Markdown;
+    a .html/.htm file or a folder containing them -> HTML.
 
 THEN, in Apple Notes:  File -> Import to Notes...  -> pick the .enex.
 Notes creates an "Imported Notes" folder; rename or move it afterwards
@@ -45,10 +50,18 @@ MARKDOWN MODE DETAILS
       links are embedded; paths are resolved relative to the .md file's folder
       (URL-encoded spaces like %20 are handled). `http(s):`/`mailto:` links
       stay as links.
+
+HTML MODE DETAILS
+    * Title  = first heading, else <title>, else filename.
+    * Date   = file creation date (falls back to mtime), same as Markdown.
+    * Local <img src="rel/path.jpg"> and local <a href="rel/path.pdf"> files
+      are embedded; http(s): and mailto: links stay clickable.
+    * <script>, <style>, and PhotoSwipe export chrome are ignored.
 """
 
 import argparse, json, os, re, hashlib, base64, html, sys, urllib.parse
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 try:
     from zoneinfo import ZoneInfo
 except Exception:
@@ -67,7 +80,8 @@ MIME = {"png": "image/png", "jpeg": "image/jpeg", "jpg": "image/jpeg",
 # shared helpers
 # ----------------------------------------------------------------------------
 def real_md5(path):
-    return hashlib.md5(open(path, "rb").read()).hexdigest()
+    with open(path, "rb") as f:
+        return hashlib.md5(f.read()).hexdigest()
 
 
 def mime_for(path):
@@ -250,7 +264,8 @@ def _parse_date(s):
 
 def markdown_note(path):
     base_dir = os.path.dirname(os.path.abspath(path))
-    text = open(path, encoding="utf-8").read()
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
     meta, body = _parse_frontmatter(text)
 
     atts, parts, title = {}, [], None
@@ -380,6 +395,276 @@ def _cleanup_tmp():
 
 
 # ----------------------------------------------------------------------------
+# HTML mode
+# ----------------------------------------------------------------------------
+HTML_EXTS = (".html", ".htm")
+HTML_BLOCK_TAGS = {
+    "article", "aside", "blockquote", "dd", "div", "dl", "dt", "figcaption",
+    "figure", "footer", "header", "hr", "li", "main", "nav", "ol", "p",
+    "section", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul",
+}
+HTML_HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+HTML_INLINE_TAGS = {
+    "b": ("b", "b"),
+    "strong": ("b", "b"),
+    "i": ("i", "i"),
+    "em": ("i", "i"),
+    "u": ("u", "u"),
+}
+HTML_SKIP_TAGS = {"canvas", "iframe", "noscript", "object", "script", "style"}
+HTML_VOID_TAGS = {
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+    "meta", "param", "source", "track", "wbr",
+}
+
+
+class _HtmlToEnml(HTMLParser):
+    """Small, dependency-free HTML-to-ENML adapter for exported note HTML."""
+
+    def __init__(self, base_dir, atts):
+        super().__init__(convert_charrefs=True)
+        self.base_dir = base_dir
+        self.atts = atts
+        self.parts = []
+        self.inline = []
+        self.title = None
+        self.head_title = None
+        self.title_text = []
+        self.heading_text = None
+        self.in_head = False
+        self.in_title = False
+        self.pre_depth = 0
+        self.skip_depth = 0
+        self.link_stack = []
+
+    def handle_starttag(self, tag, attrs):
+        self._start(tag, attrs, closed=False)
+
+    def handle_startendtag(self, tag, attrs):
+        was_skipping = self.skip_depth
+        self._start(tag, attrs, closed=True)
+        if not was_skipping and tag.lower() not in HTML_VOID_TAGS:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if self.skip_depth:
+            if tag not in HTML_VOID_TAGS:
+                self.skip_depth = max(0, self.skip_depth - 1)
+            return
+        if tag == "head":
+            self.in_head = False
+            return
+        if tag == "title":
+            self.in_title = False
+            title = self._plain(" ".join(self.title_text))
+            if title and self.head_title is None:
+                self.head_title = title
+            return
+        if self.in_head:
+            return
+        if tag == "a":
+            self._end_link()
+            return
+        if tag in HTML_INLINE_TAGS:
+            _, close_tag = HTML_INLINE_TAGS[tag]
+            self._append(f"</{close_tag}>", linkable=False)
+            return
+        if tag in HTML_HEADING_TAGS:
+            self._append("</b>", linkable=False)
+            title = self._plain(" ".join(self.heading_text or []))
+            if title and self.title is None:
+                self.title = title
+            self.heading_text = None
+            self._flush_block()
+            return
+        if tag == "pre":
+            self.pre_depth = max(0, self.pre_depth - 1)
+            self._flush_block()
+            return
+        if tag in HTML_BLOCK_TAGS:
+            self._flush_block()
+
+    def handle_data(self, data):
+        if self.skip_depth:
+            return
+        if self.in_title:
+            self.title_text.append(data)
+            return
+        if self.in_head:
+            return
+        if self.heading_text is not None:
+            self.heading_text.append(data)
+
+        if self.pre_depth:
+            if data.strip():
+                escaped = html.escape(data).replace("\n", "<br/>")
+                self._append(escaped, linkable=True)
+            return
+
+        text = re.sub(r"\s+", " ", data)
+        if text.strip():
+            self._append(html.escape(text), linkable=True)
+        elif self.inline and not self.inline[-1].endswith((" ", "<br/>")):
+            self._append(" ", linkable=False)
+
+    def close(self):
+        super().close()
+        self._flush_block()
+
+    def _start(self, tag, attrs, closed):
+        tag = tag.lower()
+        attr = {k.lower(): (v or "") for k, v in attrs}
+
+        if self.skip_depth:
+            if not closed and tag not in HTML_VOID_TAGS:
+                self.skip_depth += 1
+            return
+        if tag == "head":
+            self.in_head = True
+            return
+        if tag == "title":
+            self.in_title = True
+            self.title_text = []
+            return
+        if self.in_head:
+            return
+        if tag in HTML_SKIP_TAGS or self._is_export_chrome(attr):
+            if not closed and tag not in HTML_VOID_TAGS:
+                self.skip_depth = 1
+            return
+        if tag == "br":
+            self._append("<br/>", linkable=False)
+            return
+        if tag == "img":
+            self._image(attr)
+            return
+        if tag == "a":
+            self._start_link(attr)
+            return
+        if tag in HTML_INLINE_TAGS:
+            open_tag, _ = HTML_INLINE_TAGS[tag]
+            self._append(f"<{open_tag}>", linkable=True)
+            return
+        if tag in HTML_HEADING_TAGS:
+            self._flush_block()
+            self.heading_text = []
+            self._append("<b>", linkable=True)
+            return
+        if tag == "pre":
+            self._flush_block()
+            self.pre_depth += 1
+            return
+        if tag == "li":
+            self._flush_block()
+            self._append("- ", linkable=False)
+            return
+        if tag == "hr":
+            self._flush_block()
+            self.parts.append("<div><br/></div>")
+            return
+        if tag in HTML_BLOCK_TAGS:
+            self._flush_block()
+
+    def _append(self, fragment, linkable):
+        if linkable:
+            self._open_link()
+        self.inline.append(fragment)
+
+    def _flush_block(self):
+        fragment = "".join(self.inline).strip()
+        self.inline = []
+        if fragment:
+            self.parts.append(f"<div>{fragment}</div>")
+
+    def _start_link(self, attr):
+        href = attr.get("href", "").strip()
+        local = _resolve_local(href, self.base_dir) if href else None
+        if local:
+            self._append(en_media(add_attachment(local, self.atts)), linkable=False)
+            self.link_stack.append({"href": None, "opened": False})
+            return
+        if re.match(r"^(https?://|mailto:)", href):
+            self.link_stack.append({"href": href, "opened": False})
+            return
+        self.link_stack.append({"href": None, "opened": False})
+
+    def _open_link(self):
+        if not self.link_stack:
+            return
+        link = self.link_stack[-1]
+        if link["href"] and not link["opened"]:
+            href = html.escape(link["href"], quote=True)
+            self.inline.append(f'<a href="{href}">')
+            link["opened"] = True
+
+    def _end_link(self):
+        if not self.link_stack:
+            return
+        link = self.link_stack.pop()
+        if link["opened"]:
+            while self.inline and not self.inline[-1].rstrip():
+                self.inline.pop()
+            if self.inline:
+                self.inline[-1] = self.inline[-1].rstrip()
+            self.inline.append("</a>")
+
+    def _image(self, attr):
+        src = attr.get("src", "").strip()
+        path = _resolve_local(src, self.base_dir) if src else None
+        if path:
+            self._append(en_media(add_attachment(path, self.atts)), linkable=False)
+            return
+        alt = attr.get("alt", "").strip()
+        if alt:
+            self._append(html.escape(alt), linkable=True)
+
+    def _is_export_chrome(self, attr):
+        classes = attr.get("class", "").split()
+        return "pswp" in classes or any(c.startswith("pswp__") for c in classes)
+
+    def _plain(self, value):
+        return re.sub(r"\s+", " ", value).strip()
+
+    def enml(self):
+        self._flush_block()
+        return "".join(self.parts)
+
+
+def collect_html_files(src):
+    low = src.lower()
+    if os.path.isfile(src):
+        return [src] if low.endswith(HTML_EXTS) else []
+    return [os.path.join(src, f) for f in sorted(os.listdir(src))
+            if f.lower().endswith(HTML_EXTS)]
+
+
+def html_note(path):
+    base_dir = os.path.dirname(os.path.abspath(path))
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    atts = {}
+    parser = _HtmlToEnml(base_dir, atts)
+    parser.feed(text)
+    parser.close()
+
+    title = parser.title or parser.head_title or os.path.splitext(os.path.basename(path))[0]
+    created_local = _file_birth_dt(path)
+    updated_local = datetime.fromtimestamp(os.path.getmtime(path))
+    header = f'<div><b>{html.escape(created_local.strftime("%Y-%m-%d"))}</b></div><div><br/></div>'
+    return {"title": title, "enml": header + parser.enml(),
+            "created": _utc_stamp(created_local), "updated": _utc_stamp(updated_local),
+            "atts": atts}
+
+
+def html_notes(src):
+    files = collect_html_files(src)
+    if not files:
+        sys.exit(f"No HTML content found in {src}")
+    return [html_note(f) for f in files]
+
+
+# ----------------------------------------------------------------------------
 # ENEX assembly
 # ----------------------------------------------------------------------------
 def _note_to_xml(n):
@@ -389,7 +674,8 @@ def _note_to_xml(n):
                '<en-note>' + n["enml"] + '</en-note>')
     res = []
     for att in n["atts"].values():
-        b64 = base64.b64encode(open(att["path"], "rb").read()).decode()
+        with open(att["path"], "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
         b64w = "\n".join(b64[i:i + 76] for i in range(0, len(b64), 76))
         res.append('<resource><data encoding="base64">\n' + b64w + "\n</data>"
                    f"<mime>{att['mime']}</mime><resource-attributes>"
@@ -480,7 +766,13 @@ def write_enex_split(notes, out_dir, app="dayone_to_enex"):
 def detect_format(src):
     low = src.lower()
     if os.path.isfile(src):
-        return "dayone" if low.endswith(".json") else "markdown"
+        if low.endswith(".json"):
+            return "dayone"
+        if low.endswith(HTML_EXTS):
+            return "html"
+        if low.endswith((".md", ".markdown", ".textpack")):
+            return "markdown"
+        sys.exit(f"Could not detect format for {src}")
     if low.endswith(".textbundle"):
         return "markdown"
     names = os.listdir(src)
@@ -488,9 +780,11 @@ def detect_format(src):
         return "dayone"
     if any(f.lower().endswith((".md", ".markdown", ".textbundle", ".textpack")) for f in names):
         return "markdown"
+    if any(f.lower().endswith(HTML_EXTS) for f in names):
+        return "html"
     if _bundle_md(src):                      # src is itself a .textbundle-like folder
         return "markdown"
-    sys.exit(f"Could not detect format in {src} (no .json / .md / .textbundle found)")
+    sys.exit(f"Could not detect format in {src} (no .json / .md / .html / .textbundle found)")
 
 
 def default_output(src, fmt):
@@ -504,9 +798,9 @@ def default_output(src, fmt):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Convert Day One JSON or Markdown (+ relative attachments) to an Apple Notes .enex")
-    ap.add_argument("source", help="Day One export folder/.json, or a .md file / folder of .md files")
-    ap.add_argument("-f", "--format", choices=["auto", "dayone", "markdown"], default="auto")
+        description="Convert Day One JSON, Markdown, or HTML (+ relative attachments) to an Apple Notes .enex")
+    ap.add_argument("source", help="Day One export folder/.json, or a .md/.html file or folder")
+    ap.add_argument("-f", "--format", choices=["auto", "dayone", "markdown", "html"], default="auto")
     ap.add_argument("-o", "--output", help="Output .enex path (or output folder when --split)")
     ap.add_argument("--split", action="store_true",
                     help="Write one .enex per note into a folder (recommended for large "
@@ -518,7 +812,12 @@ def main():
     if not os.path.exists(src):
         sys.exit(f"Not found: {src}")
     fmt = detect_format(src) if args.format == "auto" else args.format
-    notes = dayone_notes(src) if fmt == "dayone" else markdown_notes(src)
+    if fmt == "dayone":
+        notes = dayone_notes(src)
+    elif fmt == "html":
+        notes = html_notes(src)
+    else:
+        notes = markdown_notes(src)
     print(f"Format: {fmt}")
     try:
         if args.split:
